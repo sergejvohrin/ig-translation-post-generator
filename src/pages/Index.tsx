@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label";
 import { uploadBase64ToImgBB } from "@/services/imageService";
 import { postImageToInstagram } from "@/services/instagramService";
 import { getRandomTranslation } from "@/services/translationService";
-import { supabase } from "@/lib/supabase";
 import { Translation } from "@/types/translation";
 import { generateTranslationPostImage } from "@/utils/canvasUtils";
 
@@ -91,44 +90,10 @@ export function IndexPage() {
     setIsPosting(true);
     try {
       const imageUrl = await uploadBase64ToImgBB(previewImage, imgBbApiKey.trim());
-      const caption = buildCaption(translation);
-      const mediaId = await postImageToInstagram(instagramToken.trim(), imageUrl, caption);
-
-      const { error: logError } = await supabase.from("post_logs").insert({
-        en_word: translation.english.word,
-        es_word: translation.spanish.word,
-        ca_word: translation.catalan.word,
-        caption,
-        image_url: imageUrl,
-        instagram_media_id: mediaId,
-        status: "success",
-        error_message: null
-      });
-
-      if (logError) {
-        // Keep posting success UX even if logging is unavailable.
-        console.warn("Supabase post_logs insert failed:", logError.message);
-      }
-
+      await postImageToInstagram(instagramToken.trim(), imageUrl, buildCaption(translation));
       toast.success("Post published successfully to Instagram.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Instagram posting failed.";
-
-      const { error: logError } = await supabase.from("post_logs").insert({
-        en_word: translation.english.word,
-        es_word: translation.spanish.word,
-        ca_word: translation.catalan.word,
-        caption: buildCaption(translation),
-        image_url: null,
-        instagram_media_id: null,
-        status: "failed",
-        error_message: message
-      });
-
-      if (logError) {
-        console.warn("Supabase error logging failed:", logError.message);
-      }
-
       toast.error(message);
     } finally {
       setIsPosting(false);
