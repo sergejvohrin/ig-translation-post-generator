@@ -2,7 +2,6 @@ import { Translation } from "@/types/translation";
 
 const CANVAS_WIDTH = 1080;
 const CANVAS_HEIGHT = 1080;
-const LINE_HEIGHT = 60;
 
 async function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -22,6 +21,27 @@ function toJpegDataUrl(canvas: HTMLCanvasElement): string {
   return dataUrl;
 }
 
+function drawFittedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  initialSize: number,
+  minSize: number,
+  weight: number
+): void {
+  let size = initialSize;
+  while (size > minSize) {
+    ctx.font = `${weight} ${size}px Inter, sans-serif`;
+    if (ctx.measureText(text).width <= maxWidth) {
+      break;
+    }
+    size -= 2;
+  }
+  ctx.fillText(text, x, y);
+}
+
 export async function generateTranslationPostImage(
   translation: Translation,
   backgroundUrl: string
@@ -39,32 +59,55 @@ export async function generateTranslationPostImage(
 
   ctx.drawImage(image, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  // Global dim layer for readability.
+  ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
   ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-  const lines = [
-    `EN: ${translation.english.word}`,
-    translation.english.phrase,
-    "",
-    `ES: ${translation.spanish.word}`,
-    translation.spanish.phrase,
-    "",
-    `CA: ${translation.catalan.word}`,
-    translation.catalan.phrase
+  const contentWidth = 860;
+  const contentX = (CANVAS_WIDTH - contentWidth) / 2;
+  const sectionHeight = 190;
+  const gap = 28;
+  const totalHeight = sectionHeight * 3 + gap * 2;
+  const startY = (CANVAS_HEIGHT - totalHeight) / 2 - 15;
+
+  const sections = [
+    {
+      title: "ENGLISH",
+      word: translation.english.word.toLowerCase(),
+      phrase: translation.english.phrase
+    },
+    {
+      title: "SPANISH",
+      word: translation.spanish.word.toLowerCase(),
+      phrase: translation.spanish.phrase
+    },
+    {
+      title: "CATALAN",
+      word: translation.catalan.word.toLowerCase(),
+      phrase: translation.catalan.phrase
+    }
   ];
 
-  ctx.fillStyle = "#FFFFFF";
-  ctx.font = "700 48px Inter, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const textBlockHeight = (lines.length - 1) * LINE_HEIGHT;
-  let y = CANVAS_HEIGHT / 2 - textBlockHeight / 2;
+  sections.forEach((section, index) => {
+    const y = startY + index * (sectionHeight + gap);
+    const centerX = CANVAS_WIDTH / 2;
+    const centerY = y + sectionHeight / 2;
 
-  for (const line of lines) {
-    ctx.fillText(line, CANVAS_WIDTH / 2, y);
-    y += LINE_HEIGHT;
-  }
+    // Grey translucent box behind each language block.
+    ctx.fillStyle = "rgba(150, 150, 150, 0.24)";
+    ctx.fillRect(contentX, y, contentWidth, sectionHeight);
+
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = "700 48px Inter, sans-serif";
+    ctx.fillText(section.title, centerX, centerY - 54);
+
+    drawFittedText(ctx, section.word, centerX, centerY + 4, contentWidth - 120, 78, 54, 800);
+
+    drawFittedText(ctx, section.phrase, centerX, centerY + 64, contentWidth - 120, 50, 32, 500);
+  });
 
   return toJpegDataUrl(canvas);
 }
