@@ -32,9 +32,10 @@ export function IndexPage() {
   const [previewImage, setPreviewImage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAiWord, setIsGeneratingAiWord] = useState(false);
+  const [isSavingToImgBb, setIsSavingToImgBb] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
 
-  const isBusy = isGenerating || isGeneratingAiWord || isPosting;
+  const isBusy = isGenerating || isGeneratingAiWord || isSavingToImgBb || isPosting;
 
   const sections = useMemo(
     () => [
@@ -126,6 +127,34 @@ export function IndexPage() {
     }
   };
 
+  const handleSaveToImgBb = async () => {
+    if (!imgBbApiKey.trim()) {
+      toast.error("Missing ImgBB API key.");
+      return;
+    }
+
+    if (!previewImage) {
+      toast.error("Preview image is not ready yet. Please wait.");
+      return;
+    }
+
+    setIsSavingToImgBb(true);
+    try {
+      const imageUrl = await uploadBase64ToImgBB(previewImage, imgBbApiKey.trim());
+      toast.success("Image saved to ImgBB.", {
+        action: {
+          label: "Open",
+          onClick: () => window.open(imageUrl, "_blank", "noopener,noreferrer")
+        }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Saving to ImgBB failed.";
+      toast.error(message);
+    } finally {
+      setIsSavingToImgBb(false);
+    }
+  };
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 p-4 md:p-8">
       <Card>
@@ -181,6 +210,16 @@ export function IndexPage() {
                   </>
                 ) : (
                   "AI Word"
+                )}
+              </Button>
+              <Button onClick={handleSaveToImgBb} disabled={isBusy || !previewImage} variant="secondary">
+                {isSavingToImgBb ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save to ImgBB"
                 )}
               </Button>
               <Button onClick={handlePostToInstagram} disabled={isBusy || !previewImage}>
