@@ -10,14 +10,17 @@ A React + TypeScript app that generates square translation posts (English, Spani
 - Canvas API
 - Axios
 - Sonner (toast notifications)
+- Supabase Edge Functions (backend secret handling for Hugging Face)
 
 ## Project Structure
 
 - `src/services/imageService.ts` - ImgBB upload logic
 - `src/services/instagramService.ts` - Instagram API via CORS proxy
 - `src/services/translationService.ts` - random translation data
+- `src/services/huggingFaceService.ts` - calls Supabase Edge Function for AI translation generation
 - `src/utils/canvasUtils.ts` - Canvas image composition
 - `src/pages/Index.tsx` - main UI page
+- `supabase/functions/hf-translation/index.ts` - backend Hugging Face integration
 
 ## Local Run
 
@@ -48,6 +51,22 @@ npm run dev
 - Credentials are kept in component state only.
 - No `localStorage` persistence.
 - No hardcoded API keys.
+- Hugging Face API key is backend-only via Supabase function secrets (`HF_API_TOKEN`).
+
+## Hugging Face Backend Setup
+
+Deploy the edge function and set secrets in Supabase (not in frontend):
+
+```bash
+supabase login
+supabase link --project-ref rfaaaszgeuljjczzdrcz
+supabase secrets set HF_API_TOKEN=your_huggingface_token HF_MODEL=google/flan-t5-base
+supabase functions deploy hf-translation --no-verify-jwt
+```
+
+After deploy, the frontend `AI Word` button calls:
+
+- `POST https://<project-ref>.supabase.co/functions/v1/hf-translation`
 
 ## Instagram + ImgBB Flow
 

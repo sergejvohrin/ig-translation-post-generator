@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { uploadBase64ToImgBB } from "@/services/imageService";
 import { postImageToInstagram } from "@/services/instagramService";
+import { generateAiTranslation } from "@/services/huggingFaceService";
 import { getRandomTranslation } from "@/services/translationService";
 import { Translation } from "@/types/translation";
 import { generateTranslationPostImage } from "@/utils/canvasUtils";
@@ -29,9 +30,10 @@ export function IndexPage() {
   const [translation, setTranslation] = useState<Translation>(() => getRandomTranslation());
   const [previewImage, setPreviewImage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingAiWord, setIsGeneratingAiWord] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
 
-  const isBusy = isGenerating || isPosting;
+  const isBusy = isGenerating || isGeneratingAiWord || isPosting;
 
   const sections = useMemo(
     () => [
@@ -74,6 +76,20 @@ export function IndexPage() {
 
   const handleNewWord = () => {
     setTranslation(getRandomTranslation());
+  };
+
+  const handleAiWord = async () => {
+    setIsGeneratingAiWord(true);
+    try {
+      const aiTranslation = await generateAiTranslation();
+      setTranslation(aiTranslation);
+      toast.success("Generated new AI translation.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI translation generation failed.";
+      toast.error(message);
+    } finally {
+      setIsGeneratingAiWord(false);
+    }
   };
 
   const handlePostToInstagram = async () => {
@@ -146,6 +162,16 @@ export function IndexPage() {
             <div className="flex flex-wrap gap-3">
               <Button onClick={handleNewWord} disabled={isBusy}>
                 New Word
+              </Button>
+              <Button onClick={handleAiWord} disabled={isBusy} variant="secondary">
+                {isGeneratingAiWord ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  "AI Word"
+                )}
               </Button>
               <Button onClick={handlePostToInstagram} disabled={isBusy || !previewImage}>
                 {isPosting ? (
