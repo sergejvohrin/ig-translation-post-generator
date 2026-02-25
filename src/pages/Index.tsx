@@ -8,12 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { uploadBase64ToImgBB } from "@/services/imageService";
 import { postImageToInstagram } from "@/services/instagramService";
+import { generateAiSpainBackgroundImage } from "@/services/huggingFaceImageService";
 import { generateAiTranslation } from "@/services/huggingFaceService";
 import { getRandomTranslation } from "@/services/translationService";
 import { Translation } from "@/types/translation";
 import { generateTranslationPostImage } from "@/utils/canvasUtils";
 
-const BACKGROUND_IMAGE = "https://images.pexels.com/photos/457882/pexels-photo-457882.jpeg";
+const FALLBACK_BACKGROUND_IMAGE = "https://images.pexels.com/photos/457882/pexels-photo-457882.jpeg";
 
 function buildCaption(translation: Translation): string {
   return [
@@ -59,7 +60,16 @@ export function IndexPage() {
   const generateImage = async (value: Translation) => {
     setIsGenerating(true);
     try {
-      const image = await generateTranslationPostImage(value, BACKGROUND_IMAGE);
+      let backgroundImage = FALLBACK_BACKGROUND_IMAGE;
+
+      try {
+        backgroundImage = await generateAiSpainBackgroundImage(value.english.word);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "AI background generation failed.";
+        toast.error(`${message} Using fallback background image.`);
+      }
+
+      const image = await generateTranslationPostImage(value, backgroundImage);
       setPreviewImage(image);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to generate preview image.";
