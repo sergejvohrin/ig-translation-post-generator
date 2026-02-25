@@ -9,8 +9,8 @@ interface Translation {
   catalan: { word: string; phrase: string };
 }
 
-interface HuggingFaceResponseItem {
-  generated_text?: string;
+interface HuggingFaceModelListResponse {
+  data?: Array<{ id: string }>;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -47,8 +47,44 @@ function assertTranslationShape(value: unknown): asserts value is Translation {
   }
 }
 
+async function resolveModel(token: string): Promise<string> {
+  const preferred = [
+    Deno.env.get("HF_MODEL"),
+    "Qwen/Qwen2.5-Coder-7B-Instruct",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "deepseek-ai/DeepSeek-R1:fastest"
+  ].filter((value): value is string => Boolean(value && value.trim()));
+
+  const response = await fetch("https://router.huggingface.co/v1/models", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to list Hugging Face models (${response.status}).`);
+  }
+
+  const data = (await response.json()) as HuggingFaceModelListResponse;
+  const available = new Set((data.data ?? []).map((model) => model.id));
+
+  for (const candidate of preferred) {
+    if (available.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  const firstAvailable = data.data?.[0]?.id;
+  if (!firstAvailable) {
+    throw new Error("No available Hugging Face router models found for this token.");
+  }
+
+  return firstAvailable;
+}
+
 async function generateTranslation(word: string, token: string): Promise<Translation> {
-  const model = Deno.env.get("HF_MODEL") ?? "google/flan-t5-base";
+  const model = await resolveModel(token);
   const prompt = [
     "Return only valid JSON without markdown or explanation.",
     "Schema:",
@@ -57,19 +93,17 @@ async function generateTranslation(word: string, token: string): Promise<Transla
     "Task: Translate the word and generate one short, natural example phrase in each language."
   ].join("\n");
 
-  const hfResponse = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+  const hfResponse = await fetch("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 240,
-        temperature: 0.2,
-        return_full_text: false
-      }
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 320,
+      temperature: 0.2
     })
   });
 
@@ -78,8 +112,10 @@ async function generateTranslation(word: string, token: string): Promise<Transla
     throw new Error(`Hugging Face request failed (${hfResponse.status}): ${errorBody}`);
   }
 
-  const data = (await hfResponse.json()) as HuggingFaceResponseItem[] | { generated_text?: string };
-  const generatedText = Array.isArray(data) ? data[0]?.generated_text ?? "" : data.generated_text ?? "";
+  const data = (await hfResponse.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const generatedText = data.choices?.[0]?.message?.content ?? "";
   const extracted = extractJsonObject(generatedText);
 
   if (!extracted) {
