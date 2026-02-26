@@ -19,6 +19,15 @@ interface PublishRequest {
 
 type RequestBody = SaveRequest | PublishRequest;
 
+class PipelineError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -53,7 +62,7 @@ async function uploadToImgBB(base64Image: string, apiKey: string): Promise<strin
   };
 
   if (!response.ok || !payload.success || !payload.data?.url) {
-    throw new Error(payload.error?.message ?? "ImgBB upload failed.");
+    throw new PipelineError(payload.error?.message ?? "ImgBB upload failed.", 400);
   }
 
   return payload.data.url;
@@ -87,7 +96,7 @@ async function createInstagramContainer(
 
   const data = (await response.json()) as { id?: string; error?: { message?: string } };
   if (!response.ok || !data.id) {
-    throw new Error(data.error?.message ?? "Instagram media container creation failed.");
+    throw new PipelineError(data.error?.message ?? "Instagram media container creation failed.", 400);
   }
 
   return data.id;
@@ -111,7 +120,7 @@ async function publishInstagramContainerForUser(
 
   const data = (await response.json()) as { id?: string; error?: { message?: string } };
   if (!response.ok || !data.id) {
-    throw new Error(data.error?.message ?? "Instagram publish failed.");
+    throw new PipelineError(data.error?.message ?? "Instagram publish failed.", 400);
   }
 
   return data.id;
@@ -132,7 +141,7 @@ async function resolveInstagramBusinessAccountId(token: string): Promise<string>
   };
 
   if (!pagesResponse.ok) {
-    throw new Error(pagesData.error?.message ?? "Failed to load Facebook pages.");
+    throw new PipelineError(pagesData.error?.message ?? "Failed to load Facebook pages.", 400);
   }
 
   for (const page of pagesData.data ?? []) {
@@ -155,8 +164,10 @@ async function resolveInstagramBusinessAccountId(token: string): Promise<string>
     }
   }
 
-  throw new Error(
+  throw new PipelineError(
     "No Instagram business account found for this token. Ensure your Instagram Professional account is linked to a Facebook Page and the token has pages_show_list + instagram_content_publish."
+    ,
+    400
   );
 }
 
@@ -179,7 +190,7 @@ Deno.serve(async (request) => {
     const fallbackImgBbKey = Deno.env.get("IMGBB_API_KEY") ?? "";
     const imgbbApiKey = (body.imgbbApiKey ?? fallbackImgBbKey).trim();
     if (!imgbbApiKey) {
-      return jsonResponse({ error: "Missing IMGBB_API_KEY secret (or runtime key)." }, 500);
+      return jsonResponse({ error: "Missing IMGBB_API_KEY secret (or runtime key)." }, 400);
     }
 
     const imageUrl = await uploadToImgBB(body.imageDataUrl, imgbbApiKey);
@@ -191,7 +202,7 @@ Deno.serve(async (request) => {
     const fallbackInstagramToken = Deno.env.get("INSTAGRAM_ACCESS_TOKEN") ?? "";
     const instagramToken = (body.instagramAccessToken ?? fallbackInstagramToken).trim();
     if (!instagramToken) {
-      return jsonResponse({ error: "Missing INSTAGRAM_ACCESS_TOKEN secret (or runtime token)." }, 500);
+      return jsonResponse({ error: "Missing INSTAGRAM_ACCESS_TOKEN secret (or runtime token)." }, 400);
     }
 
     const caption = body.caption ?? "";
@@ -209,6 +220,17 @@ Deno.serve(async (request) => {
       storyId
     });
   } catch (error) {
+    const maybeStatus =
+      typeof error === "object" && error !== null && "status" in error
+        ? (error as { status?: unknown }).status
+        : undefined;
+    if (typeof maybeStatus === "number") {
+      const message =
+        typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "Request failed.";
+      return jsonResponse({ error: message }, maybeStatus);
+    }
     const message = error instanceof Error ? error.message : "Unknown backend error";
     return jsonResponse({ error: message }, 500);
   }
