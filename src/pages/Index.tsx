@@ -6,10 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { uploadBase64ToImgBB } from "@/services/imageService";
-import { postImageToInstagramStoryAndPost } from "@/services/instagramService";
 import { generateAiSpainBackgroundImage } from "@/services/huggingFaceImageService";
 import { generateAiTranslation } from "@/services/huggingFaceService";
+import { publishGeneratedImageToInstagram, saveGeneratedImageToImgBB } from "@/services/mediaPipelineService";
 import { getRandomTranslation } from "@/services/translationService";
 import { Translation } from "@/types/translation";
 import { generateTranslationPostImage } from "@/utils/canvasUtils";
@@ -108,16 +107,11 @@ export function IndexPage() {
   };
 
   const handleGenerateAndSaveToImgBB = async () => {
-    if (!imgBbApiKey.trim()) {
-      toast.error("Missing ImgBB API key.");
-      return;
-    }
-
     setIsGeneratingAndSaving(true);
     try {
       const image = await buildGeneratedImage(translation);
       setPreviewImage(image);
-      const imageUrl = await uploadBase64ToImgBB(image, imgBbApiKey.trim());
+      const { imageUrl } = await saveGeneratedImageToImgBB(image, imgBbApiKey.trim() || undefined);
       toast.success("Generated image saved to ImgBB.", {
         action: {
           label: "Open",
@@ -133,11 +127,6 @@ export function IndexPage() {
   };
 
   const handlePostAsStoryAndPost = async () => {
-    if (!instagramToken.trim() || !imgBbApiKey.trim()) {
-      toast.error("Missing API credentials. Add Instagram token and ImgBB API key.");
-      return;
-    }
-
     setIsPostingStoryAndPost(true);
     try {
       const image = previewImage || (await buildGeneratedImage(translation));
@@ -145,9 +134,19 @@ export function IndexPage() {
         setPreviewImage(image);
       }
 
-      const imageUrl = await uploadBase64ToImgBB(image, imgBbApiKey.trim());
-      await postImageToInstagramStoryAndPost(instagramToken.trim(), imageUrl, buildCaption(translation));
+      const { imageUrl } = await publishGeneratedImageToInstagram(
+        image,
+        buildCaption(translation),
+        instagramToken.trim() || undefined,
+        imgBbApiKey.trim() || undefined
+      );
       toast.success("Image posted to Instagram Story and Feed Post.");
+      toast.success("Uploaded image URL ready.", {
+        action: {
+          label: "Open",
+          onClick: () => window.open(imageUrl, "_blank", "noopener,noreferrer")
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Instagram story/post publish failed.";
       toast.error(message);
@@ -172,7 +171,7 @@ export function IndexPage() {
               <Input
                 id="instagram-token"
                 type="password"
-                placeholder="Paste access token"
+                placeholder="Optional override (uses backend secret by default)"
                 value={instagramToken}
                 onChange={(event) => setInstagramToken(event.target.value)}
               />
@@ -183,7 +182,7 @@ export function IndexPage() {
               <Input
                 id="imgbb-api-key"
                 type="password"
-                placeholder="Paste ImgBB API key"
+                placeholder="Optional override (uses backend secret by default)"
                 value={imgBbApiKey}
                 onChange={(event) => setImgBbApiKey(event.target.value)}
               />
