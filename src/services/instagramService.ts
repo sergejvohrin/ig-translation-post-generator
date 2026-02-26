@@ -19,15 +19,25 @@ function buildInstagramUrl(path: string): string {
 export async function createMediaContainer(
   accessToken: string,
   imageUrl: string,
-  caption: string
+  caption: string,
+  mediaType?: "IMAGE" | "STORIES"
 ): Promise<string> {
+  const payload: Record<string, string> = {
+    image_url: imageUrl,
+    access_token: accessToken
+  };
+
+  if (caption && mediaType !== "STORIES") {
+    payload.caption = caption;
+  }
+
+  if (mediaType === "STORIES") {
+    payload.media_type = "STORIES";
+  }
+
   const response = await axios.post<CreateMediaContainerResponse>(
     buildInstagramUrl("/me/media"),
-    {
-      image_url: imageUrl,
-      caption,
-      access_token: accessToken
-    },
+    payload,
     {
       headers: {
         "Content-Type": "application/json"
@@ -74,4 +84,22 @@ export async function postImageToInstagram(
 
   const creationId = await createMediaContainer(accessToken, imageUrl, caption);
   return publishMediaContainer(accessToken, creationId);
+}
+
+export async function postImageToInstagramStoryAndPost(
+  accessToken: string,
+  imageUrl: string,
+  caption: string
+): Promise<{ postId: string; storyId: string }> {
+  if (!accessToken) {
+    throw new Error("Instagram access token is required.");
+  }
+
+  const postCreationId = await createMediaContainer(accessToken, imageUrl, caption, "IMAGE");
+  const storyCreationId = await createMediaContainer(accessToken, imageUrl, "", "STORIES");
+
+  const postId = await publishMediaContainer(accessToken, postCreationId);
+  const storyId = await publishMediaContainer(accessToken, storyCreationId);
+
+  return { postId, storyId };
 }

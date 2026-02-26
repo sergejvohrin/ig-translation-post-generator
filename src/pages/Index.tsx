@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { uploadBase64ToImgBB } from "@/services/imageService";
-import { postImageToInstagram } from "@/services/instagramService";
+import { postImageToInstagramStoryAndPost } from "@/services/instagramService";
 import { generateAiSpainBackgroundImage } from "@/services/huggingFaceImageService";
 import { generateAiTranslation } from "@/services/huggingFaceService";
 import { getRandomTranslation } from "@/services/translationService";
@@ -32,10 +32,10 @@ export function IndexPage() {
   const [previewImage, setPreviewImage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingAiWord, setIsGeneratingAiWord] = useState(false);
-  const [isSavingToImgBb, setIsSavingToImgBb] = useState(false);
-  const [isPosting, setIsPosting] = useState(false);
+  const [isGeneratingAndSaving, setIsGeneratingAndSaving] = useState(false);
+  const [isPostingStoryAndPost, setIsPostingStoryAndPost] = useState(false);
 
-  const isBusy = isGenerating || isGeneratingAiWord || isSavingToImgBb || isPosting;
+  const isBusy = isGenerating || isGeneratingAiWord || isGeneratingAndSaving || isPostingStoryAndPost;
 
   const sections = useMemo(
     () => [
@@ -58,19 +58,23 @@ export function IndexPage() {
     [translation]
   );
 
+  const buildGeneratedImage = async (value: Translation): Promise<string> => {
+    let backgroundImage = FALLBACK_BACKGROUND_IMAGE;
+
+    try {
+      backgroundImage = await generateAiSpainBackgroundImage(value.english.word);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI background generation failed.";
+      toast.error(`${message} Using fallback background image.`);
+    }
+
+    return generateTranslationPostImage(value, backgroundImage);
+  };
+
   const generateImage = async (value: Translation) => {
     setIsGenerating(true);
     try {
-      let backgroundImage = FALLBACK_BACKGROUND_IMAGE;
-
-      try {
-        backgroundImage = await generateAiSpainBackgroundImage(value.english.word);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "AI background generation failed.";
-        toast.error(`${message} Using fallback background image.`);
-      }
-
-      const image = await generateTranslationPostImage(value, backgroundImage);
+      const image = await buildGeneratedImage(value);
       setPreviewImage(image);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to generate preview image.";
@@ -103,55 +107,52 @@ export function IndexPage() {
     }
   };
 
-  const handlePostToInstagram = async () => {
-    if (!instagramToken.trim() || !imgBbApiKey.trim()) {
-      toast.error("Missing API credentials. Add Instagram token and ImgBB API key.");
-      return;
-    }
-
-    if (!previewImage) {
-      toast.error("Preview image is not ready yet. Please wait.");
-      return;
-    }
-
-    setIsPosting(true);
-    try {
-      const imageUrl = await uploadBase64ToImgBB(previewImage, imgBbApiKey.trim());
-      await postImageToInstagram(instagramToken.trim(), imageUrl, buildCaption(translation));
-      toast.success("Post published successfully to Instagram.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Instagram posting failed.";
-      toast.error(message);
-    } finally {
-      setIsPosting(false);
-    }
-  };
-
-  const handleSaveToImgBb = async () => {
+  const handleGenerateAndSaveToImgBB = async () => {
     if (!imgBbApiKey.trim()) {
       toast.error("Missing ImgBB API key.");
       return;
     }
 
-    if (!previewImage) {
-      toast.error("Preview image is not ready yet. Please wait.");
-      return;
-    }
-
-    setIsSavingToImgBb(true);
+    setIsGeneratingAndSaving(true);
     try {
-      const imageUrl = await uploadBase64ToImgBB(previewImage, imgBbApiKey.trim());
-      toast.success("Image saved to ImgBB.", {
+      const image = await buildGeneratedImage(translation);
+      setPreviewImage(image);
+      const imageUrl = await uploadBase64ToImgBB(image, imgBbApiKey.trim());
+      toast.success("Generated image saved to ImgBB.", {
         action: {
           label: "Open",
           onClick: () => window.open(imageUrl, "_blank", "noopener,noreferrer")
         }
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Saving to ImgBB failed.";
+      const message = error instanceof Error ? error.message : "Generate and save failed.";
       toast.error(message);
     } finally {
-      setIsSavingToImgBb(false);
+      setIsGeneratingAndSaving(false);
+    }
+  };
+
+  const handlePostAsStoryAndPost = async () => {
+    if (!instagramToken.trim() || !imgBbApiKey.trim()) {
+      toast.error("Missing API credentials. Add Instagram token and ImgBB API key.");
+      return;
+    }
+
+    setIsPostingStoryAndPost(true);
+    try {
+      const image = previewImage || (await buildGeneratedImage(translation));
+      if (!previewImage) {
+        setPreviewImage(image);
+      }
+
+      const imageUrl = await uploadBase64ToImgBB(image, imgBbApiKey.trim());
+      await postImageToInstagramStoryAndPost(instagramToken.trim(), imageUrl, buildCaption(translation));
+      toast.success("Image posted to Instagram Story and Feed Post.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Instagram story/post publish failed.";
+      toast.error(message);
+    } finally {
+      setIsPostingStoryAndPost(false);
     }
   };
 
@@ -212,24 +213,24 @@ export function IndexPage() {
                   "AI Word"
                 )}
               </Button>
-              <Button onClick={handleSaveToImgBb} disabled={isBusy || !previewImage} variant="secondary">
-                {isSavingToImgBb ? (
+              <Button onClick={handleGenerateAndSaveToImgBB} disabled={isBusy} variant="secondary">
+                {isGeneratingAndSaving ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Saving...
+                    Generating...
                   </>
                 ) : (
-                  "Save to ImgBB"
+                  "Generate + Save to ImgBB"
                 )}
               </Button>
-              <Button onClick={handlePostToInstagram} disabled={isBusy || !previewImage}>
-                {isPosting ? (
+              <Button onClick={handlePostAsStoryAndPost} disabled={isBusy}>
+                {isPostingStoryAndPost ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Posting...
                   </>
                 ) : (
-                  "Post to Instagram"
+                  "Post as Story + Post"
                 )}
               </Button>
             </div>
