@@ -3,7 +3,7 @@ name: Supabase Health Check
 on:
   schedule:
     - cron: "0 6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,15 +18,16 @@ jobs:
       elapsed_hours: ${{ steps.gate.outputs.elapsed_hours }}
       next_run_utc: ${{ steps.gate.outputs.next_run_utc }}
     steps:
-      - name: Compute 5-day cadence gate
+      - name: Compute cadence gate
         id: gate
         uses: actions/github-script@v7
         with:
           script: |
             const workflowPath = '.github/workflows/supabase-health-check.yml';
             const { owner, repo } = context.repo;
+            const thresholdHours = 120;
 
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+            const result = await github.rest.actions.listWorkflowRuns({
               owner,
               repo,
               workflow_id: workflowPath,
@@ -34,12 +35,10 @@ jobs:
               per_page: 100,
             });
 
+            const runs = result.data.workflow_runs || [];
             const successes = runs
               .filter((run) => run.conclusion === 'success' && run.id !== context.runId)
               .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-
-            const now = Date.now();
-            const thresholdHours = 120;
 
             let shouldRun = 'true';
             let reason = 'first_run';
@@ -49,7 +48,7 @@ jobs:
             if (successes.length > 0) {
               const last = successes[0];
               const lastTs = new Date(last.updated_at).getTime();
-              const elapsed = (now - lastTs) / (1000 * 60 * 60);
+              const elapsed = (Date.now() - lastTs) / (1000 * 60 * 60);
               elapsedHours = elapsed.toFixed(2);
 
               if (elapsed >= thresholdHours) {
@@ -58,8 +57,7 @@ jobs:
               } else {
                 shouldRun = 'false';
                 reason = 'elapsed<120h';
-                const nextTs = lastTs + thresholdHours * 60 * 60 * 1000;
-                nextRunUtc = new Date(nextTs).toISOString();
+                nextRunUtc = new Date(lastTs + thresholdHours * 60 * 60 * 1000).toISOString();
               }
             }
 
@@ -68,15 +66,12 @@ jobs:
             core.setOutput('elapsed_hours', elapsedHours);
             core.setOutput('next_run_utc', nextRunUtc);
 
-            core.summary
+            await core.summary
               .addHeading('Cadence Gate')
-              .addTable([
-                [{data: 'Field', header: true}, {data: 'Value', header: true}],
-                ['should_run', shouldRun],
-                ['reason', reason],
-                ['elapsed_hours', elapsedHours || 'n/a'],
-                ['next_run_utc', nextRunUtc || 'n/a'],
-              ])
+              .addRaw(`should_run: ${shouldRun}\n`)
+              .addRaw(`reason: ${reason}\n`)
+              .addRaw(`elapsed_hours: ${elapsedHours || 'n/a'}\n`)
+              .addRaw(`next_run_utc: ${nextRunUtc || 'n/a'}\n`)
               .write();
 
   health_check:
@@ -87,66 +82,49 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
-      - name: Validate required repository variables
+      - name: Validate required variables
         run: |
           set -euo pipefail
+          [ -n "${VITE_SUPABASE_URL:-}" ] || { echo "Missing VITE_SUPABASE_URL" >&2; exit 1; }
+          [ -n "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" ] || { echo "Missing VITE_SUPABASE_PUBLISHABLE_KEY" >&2; exit 1; }
 
-          if [ -z "${VITE_SUPABASE_URL:-}" ]; then
-            echo "Missing repository variable: VITE_SUPABASE_URL" >&2
-            exit 1
-          fi
-
-          if [ -z "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" ]; then
-            echo "Missing repository variable: VITE_SUPABASE_PUBLISHABLE_KEY" >&2
-            exit 1
-          fi
-
-      - name: Run Supabase health checks
+      - name: Run Supabase health suite
         id: checks
         run: |
           set -euo pipefail
 
-          endpoint_ok() {
-            local name="$1"
-            local value="$2"
-            if [ -n "$value" ]; then
-              echo "${name}=PASS" >> "$GITHUB_OUTPUT"
-            else
-              echo "${name}=FAIL" >> "$GITHUB_OUTPUT"
-              return 1
-            fi
+          mark_ok() {
+            echo "$1=PASS" >> "$GITHUB_OUTPUT"
           }
 
           echo "started_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "cadence_reason=${{ needs.cadence_gate.outputs.reason }}" >> "$GITHUB_OUTPUT"
           echo "elapsed_hours=${{ needs.cadence_gate.outputs.elapsed_hours }}" >> "$GITHUB_OUTPUT"
 
-          echo "Checking post_logs table endpoint..."
           POST_LOGS_JSON=$(curl -fsS "${VITE_SUPABASE_URL}/rest/v1/post_logs?select=id,created_at,status&order=id.desc&limit=1" \
             -H "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             -H "Authorization: Bearer ${VITE_SUPABASE_PUBLISHABLE_KEY}")
-          echo "post_logs_preview=$(echo "$POST_LOGS_JSON" | jq -c '. | .[0]? // {}')" >> "$GITHUB_OUTPUT"
-          endpoint_ok post_logs_status "$(echo "$POST_LOGS_JSON" | jq -r 'if type=="array" then "ok" else empty end')"
+          echo "post_logs_preview=$(echo "$POST_LOGS_JSON" | jq -c '.[0] // {}')" >> "$GITHUB_OUTPUT"
+          echo "$POST_LOGS_JSON" | jq -e 'type == "array"' >/dev/null
+          mark_ok post_logs_status
 
-          echo "Checking hf-translation function..."
           HF_TRANSLATION_JSON=$(curl -fsS -X POST "${VITE_SUPABASE_URL}/functions/v1/hf-translation" \
             -H "Content-Type: application/json" \
             -H "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             -H "Authorization: Bearer ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             -d '{"word":"journey"}')
-          TRANSLATION_WORD=$(echo "$HF_TRANSLATION_JSON" | jq -r '.translation.english.word // empty')
-          endpoint_ok hf_translation_status "$TRANSLATION_WORD"
+          echo "$HF_TRANSLATION_JSON" | jq -e '.translation.english.word | type == "string" and length > 0' >/dev/null
+          mark_ok hf_translation_status
 
-          echo "Checking hf-image function..."
           HF_IMAGE_JSON=$(curl -fsS -X POST "${VITE_SUPABASE_URL}/functions/v1/hf-image" \
             -H "Content-Type: application/json" \
             -H "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             -H "Authorization: Bearer ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             -d '{"word":"journey"}')
           IMAGE_DATA_URL=$(echo "$HF_IMAGE_JSON" | jq -r '.imageDataUrl // empty')
-          endpoint_ok hf_image_status "$IMAGE_DATA_URL"
+          [ -n "$IMAGE_DATA_URL" ] || { echo "hf-image returned empty imageDataUrl" >&2; exit 1; }
+          mark_ok hf_image_status
 
-          echo "Checking media-pipeline save action..."
           MEDIA_PIPELINE_JSON=$(jq -n --arg img "$IMAGE_DATA_URL" '{action:"save", imageDataUrl:$img}' | \
             curl -fsS -X POST "${VITE_SUPABASE_URL}/functions/v1/media-pipeline" \
               -H "Content-Type: application/json" \
@@ -154,20 +132,19 @@ jobs:
               -H "Authorization: Bearer ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
               -d @-)
           IMGBB_URL=$(echo "$MEDIA_PIPELINE_JSON" | jq -r '.imageUrl // empty')
-          endpoint_ok media_pipeline_save_status "$IMGBB_URL"
+          [ -n "$IMGBB_URL" ] || { echo "media-pipeline save returned empty imageUrl" >&2; exit 1; }
+          mark_ok media_pipeline_save_status
 
           echo "imgbb_url=$IMGBB_URL" >> "$GITHUB_OUTPUT"
           echo "finished_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-      - name: Write health-check summary
+      - name: Write summary
         run: |
           {
             echo "## Supabase Health Check"
             echo ""
-            echo "- cadence reason: \
-${{ steps.checks.outputs.cadence_reason }}"
-            echo "- elapsed hours since last success: \
-${{ steps.checks.outputs.elapsed_hours || 'n/a' }}"
+            echo "- cadence reason: ${{ steps.checks.outputs.cadence_reason }}"
+            echo "- elapsed hours since last success: ${{ steps.checks.outputs.elapsed_hours }}"
             echo "- started: ${{ steps.checks.outputs.started_at_utc }}"
             echo "- finished: ${{ steps.checks.outputs.finished_at_utc }}"
             echo ""
@@ -193,6 +170,6 @@ ${{ steps.checks.outputs.elapsed_hours || 'n/a' }}"
             echo "## Supabase Health Check Skipped"
             echo ""
             echo "- reason: ${{ needs.cadence_gate.outputs.reason }}"
-            echo "- elapsed hours since last success: ${{ needs.cadence_gate.outputs.elapsed_hours || 'n/a' }}"
-            echo "- next eligible run (UTC): ${{ needs.cadence_gate.outputs.next_run_utc || 'n/a' }}"
+            echo "- elapsed hours since last success: ${{ needs.cadence_gate.outputs.elapsed_hours }}"
+            echo "- next eligible run (UTC): ${{ needs.cadence_gate.outputs.next_run_utc }}"
           } >> "$GITHUB_STEP_SUMMARY"
